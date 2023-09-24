@@ -1,48 +1,3 @@
-import pandas as pd
-import time
-import datetime
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, LSTM
-from sklearn.preprocessing import MinMaxScaler
-from iqoptionapi.stable_api import IQ_Option
-from keras.models import load_model
-import os
-import json
-try:
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        # Currently, memory growth needs to be the same across GPUs
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
-except Exception as e:
-    # Memory growth must be set before GPUs have been initialized
-    print(e)
-
-
-def checktempo():
-    while True:
-        time.sleep(1)
-        if datetime.datetime.now().second == 2:
-            break
-
-
-def checktempo2():
-    while True:
-        time.sleep(1)
-        if datetime.datetime.now().second == 45:
-            break
-
-
-iq = IQ_Option("you email", "you pass")
-iq.connect()
-par = "EURUSD-OTC"
-time_frame = 60
-bet_money = 50
-
 def rsi(data, window=16):
     data = pd.DataFrame(data)
     delta = data["close"].diff()
@@ -164,6 +119,8 @@ def get_data_iq(par, iq, time_frame):
     X = scaler.fit_transform(X)
     X = pd.DataFrame(X, index=indexes)
     return X
+
+
 path = "modelo.h5"
 class CustomAgentCheckpoint(keras.Model):
     def __init__(self, num_actions):
@@ -199,10 +156,10 @@ max_replay_buffer_size = 10000
 min_replay_buffer_size = 8
 batch_size = 4  # Tamanho do lote para treinamento
 gamma = 0.99
-epsilon = 1.0
-min_epsilon = 0.01
-epsilon_decay = 0.999
-checkpoint_dir = './training_checkpoints'
+epsilon = 1.0  # Valor inicial alto
+epsilon_decay = 0.995  # Taxa de decaimento para diminuir epsilon gradualmente
+min_epsilon = 0.01  # Valor mínimo que epsilon pode atingir
+checkpoint_dir = './training_checkpoints2'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
 
@@ -254,35 +211,44 @@ def execute_action(action):
 
     return trade, checar
 
-for episode in range(100):
+for episode in range(1000):
     state = get_data_iq(par, iq, time_frame)
-    state = tf.convert_to_tensor(get_data_iq(par, iq, time_frame), dtype=tf.float32)
+    state = tf.convert_to_tensor(state, dtype=tf.float32)
+    state = tf.expand_dims(state, axis=0)  # Adicionei um eixo extra para o lote
+    print('SHAPE STATE = ',state.shape)
     done = False
     checar = False
-
+    w = 0
+    l = 0
     while not done:
-        # Seleciona ação com base na política epsilon-greedy
-        if np.random.rand() < epsilon:
+        if np.random.rand() < epsilon:  # Exploração aleatória com probabilidade epsilon
             action = np.random.randint(num_actions)
+            print("RANDOM")
         else:
-            q_values = model.predict(state,training=True)
+            q_values = model.predict(state)
             action = np.argmax(q_values[0])
-
+            print("PREVIU")
         # Executa ação no ambiente e observa novo estado e recompensa
         trade, checar = execute_action(action)
+        if checar > 0:
+            w += 1
+        elif checar < 0:
+            l += -1
+        else:
+            print('Empatou')
         new_state = get_data_iq(par, iq, time_frame)
         done = False
-        new_state = tf.convert_to_tensor(get_data_iq(par, iq, time_frame), dtype=tf.float32)
+        new_state = tf.convert_to_tensor(new_state, dtype=tf.float32)
+        new_state = tf.expand_dims(new_state, axis=0)  # Adicionei um eixo extra para o lote
+        print('SHAPE new_state = ', new_state.shape)
         replay_buffer.append((state, action, total_reward, new_state, done))
         if len(replay_buffer) >= batch_size:
             sample_indices = np.random.choice(len(replay_buffer), batch_size, replace=False)
             minibatch = [replay_buffer[i] for i in sample_indices]
-
-            states = tf.convert_to_tensor([transition[0] for transition in minibatch], dtype=tf.float32)
+            states = tf.concat([transition[0] for transition in minibatch], axis=0)
             actions = np.array([transition[1] for transition in minibatch])
             rewards = np.array([transition[2] for transition in minibatch])
-            next_states = tf.convert_to_tensor([transition[3] for transition in minibatch], dtype=tf.float32)
-
+            next_states = tf.concat([transition[3] for transition in minibatch], axis=0)
             with tf.GradientTape() as tape:
                 target_Qs = model(next_states)
                 target_Q = rewards + gamma * tf.reduce_max(target_Qs, axis=1)
@@ -294,8 +260,9 @@ for episode in range(100):
             grads = tape.gradient(loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             epsilon = max(min_epsilon, epsilon * epsilon_decay)
-
-        checkpoint.save(file_prefix=checkpoint_prefix)
-
+            checkpoint.save(file_prefix=checkpoint_prefix)
+            print('CheckPoint ok!')
+        print(f'Pracar!WINS|{w}|X|{l}|')
+        state = new_state  # Atualize o estado atual com o novo estado
        # checkpoint.save(file_prefix=checkpoint_prefix)
 
