@@ -1,3 +1,48 @@
+import pandas as pd
+import time
+import datetime
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, LSTM
+from sklearn.preprocessing import MinMaxScaler
+from iqoptionapi.stable_api import IQ_Option
+from keras.models import load_model
+import os
+import json
+try:
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+except Exception as e:
+    # Memory growth must be set before GPUs have been initialized
+    print(e)
+
+
+def checktempo():
+    while True:
+        time.sleep(1)
+        if datetime.datetime.now().second == 2:
+            break
+
+
+def checktempo2():
+    while True:
+        time.sleep(1)
+        if datetime.datetime.now().second == 45:
+            break
+
+
+iq = IQ_Option("EMAIL", "PASSWORD")
+iq.connect()
+par = "EURGBP-OTC"
+time_frame = 60
+bet_money = 10
+
 def rsi(data, window=16):
     data = pd.DataFrame(data)
     delta = data["close"].diff()
@@ -121,7 +166,7 @@ def get_data_iq(par, iq, time_frame):
     return X
 
 
-path = "modelo.h5"
+
 class CustomAgentCheckpoint(keras.Model):
     def __init__(self, num_actions):
         super().__init__()
@@ -153,13 +198,13 @@ loss_fn = tf.keras.losses.MeanSquaredError()
 
 replay_buffer = []
 max_replay_buffer_size = 10000
-min_replay_buffer_size = 8
-batch_size = 4  # Tamanho do lote para treinamento
+min_replay_buffer_size = 16
+batch_size = 12  # Tamanho do lote para treinamento
 gamma = 0.99
 epsilon = 1.0  # Valor inicial alto
 epsilon_decay = 0.995  # Taxa de decaimento para diminuir epsilon gradualmente
 min_epsilon = 0.01  # Valor mínimo que epsilon pode atingir
-checkpoint_dir = './training_checkpoints2'
+checkpoint_dir = './training_checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
 
@@ -207,9 +252,12 @@ def execute_action(action):
         total_reward += checar
         print("LOSS")
     else:
+        time.sleep(30)
         print('semoperacao')
 
     return trade, checar
+
+contador = 0
 
 for episode in range(1000):
     state = get_data_iq(par, iq, time_frame)
@@ -242,6 +290,7 @@ for episode in range(1000):
         new_state = tf.expand_dims(new_state, axis=0)  # Adicionei um eixo extra para o lote
         print('SHAPE new_state = ', new_state.shape)
         replay_buffer.append((state, action, total_reward, new_state, done))
+        contador += 1
         if len(replay_buffer) >= batch_size:
             sample_indices = np.random.choice(len(replay_buffer), batch_size, replace=False)
             minibatch = [replay_buffer[i] for i in sample_indices]
@@ -260,9 +309,12 @@ for episode in range(1000):
             grads = tape.gradient(loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             epsilon = max(min_epsilon, epsilon * epsilon_decay)
+        if contador >= 10:
+            contador = 0
             checkpoint.save(file_prefix=checkpoint_prefix)
             print('CheckPoint ok!')
         print(f'Pracar!WINS|{w}|X|{l}|')
+        print(f'contador|{contador}|')
         state = new_state  # Atualize o estado atual com o novo estado
        # checkpoint.save(file_prefix=checkpoint_prefix)
 
